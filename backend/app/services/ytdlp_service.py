@@ -12,6 +12,7 @@ import os
 from typing import Any, Callable
 
 import yt_dlp
+from yt_dlp.networking.impersonate import ImpersonateTarget
 
 from app.config import get_settings
 from app.models.schemas import MetadataResponse, VideoFormat
@@ -43,6 +44,13 @@ def _base_ydl_opts() -> dict[str, Any]:
         "extractor_args": {
             "youtube": {"player_client": ["android", "ios", "web"]},
         },
+        # Facebook (and increasingly other platforms) reject requests
+        # whose TLS handshake doesn't match a real browser's fingerprint
+        # — Python's default request library is trivially detectable.
+        # curl_cffi (installed via the yt-dlp[curl-cffi] extra) makes
+        # the connection look like real Chrome at the TLS level, not
+        # just at the HTTP header level.
+        "impersonate": ImpersonateTarget.from_str("chrome"),
     }
     # Optional escape hatch: if a cookies file is provided (exported from
     # a real logged-in browser session), use it. Not required for most

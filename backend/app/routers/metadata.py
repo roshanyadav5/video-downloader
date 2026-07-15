@@ -41,8 +41,10 @@ def _friendly_error_message(exc: Exception) -> str:
         return "This video is unavailable or has been removed."
     if "region" in text or "not available in your country" in text:
         return "This video is region-locked."
-    if "sign in" in text or "login" in text:
+    if "sign in" in text or "login" in text or "log in" in text:
         return "This video requires sign-in and can't be fetched."
+    if "cannot parse data" in text or "impersonat" in text:
+        return "This platform is temporarily blocking automated access. Please try again shortly."
     if "timed out" in text or "timeout" in text:
         return "The platform took too long to respond. Please try again."
     return "Couldn't fetch this video. It may be unavailable or unsupported."

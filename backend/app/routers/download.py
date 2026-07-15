@@ -135,6 +135,10 @@ def _friendly_download_error(exc: Exception) -> str:
         return "This video is private."
     if "unavailable" in text or "removed" in text:
         return "This video is unavailable or has been removed."
+    if "sign in" in text or "login" in text or "log in" in text:
+        return "This video requires sign-in and can't be fetched."
+    if "cannot parse data" in text or "impersonat" in text:
+        return "This platform is temporarily blocking automated access. Please try again shortly."
     if "network" in text or "timed out" in text:
         return "A network error occurred. Please try again."
     return "The download failed. Please try a different format or try again."

@@ -195,6 +195,17 @@ responses by default. If you put anything in front of the FastAPI
 backend (nginx, Cloudflare in "proxied" mode, etc.), disable buffering
 for the `/api/progress/*` route.
 
+**Facebook videos/reels failing with a generic "unavailable or
+unsupported" error** — Facebook's servers reject requests whose TLS
+handshake doesn't look like a real browser, a detection layer separate
+from (and stricter than) simple header checks. The app now installs
+yt-dlp's `curl-cffi` extra and impersonates a real Chrome TLS
+fingerprint on every request (see `impersonate` in `ytdlp_service.py`),
+which resolves the "Cannot parse data" pattern that shows up in
+yt-dlp's own issue tracker for this exact problem. If it still fails
+after redeploying with the updated `requirements.txt`, Facebook likely
+changed something again — check for a newer yt-dlp release.
+
 **"This video requires sign-in and can't be fetched" on YouTube links
 that work fine in a real browser** — this is YouTube's bot detection
 flagging your server's IP, not an issue with the video itself. Cloud
