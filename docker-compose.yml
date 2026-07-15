@@ -1,0 +1,14 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=development
+      - CORS_ORIGINS=http://localhost:3000
+      - DOWNLOAD_DIR=/tmp/fetchly-downloads
+    volumes:
+      - fetchly-downloads:/tmp/fetchly-downloads
+
+volumes:
+  fetchly-downloads:
