@@ -19,6 +19,8 @@ export interface MetadataResponse {
   duration_seconds: number | null;
   platform: string;
   uploader: string | null;
+  view_count: number | null;
+  upload_date: string | null;
   formats: VideoFormat[];
 }
 
@@ -30,9 +32,12 @@ export interface ProgressEvent {
   speed_bytes_per_sec: number | null;
   eta_seconds: number | null;
   error_message: string | null;
+  error_code: string | null;
   filename: string | null;
 }
 
 export interface ApiError {
-  detail: string;
+  success: false;
+  error: string;
+  error_code: string;
 }

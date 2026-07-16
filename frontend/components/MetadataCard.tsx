@@ -1,9 +1,15 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Clock, User } from "lucide-react";
+import { Clock, Eye, User } from "lucide-react";
 import type { MetadataResponse } from "@/lib/types";
 import { formatDuration } from "@/lib/format";
+
+function formatViewCount(count: number): string {
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M views`;
+  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}K views`;
+  return `${count} views`;
+}
 
 export default function MetadataCard({ data }: { data: MetadataResponse }) {
   return (
@@ -42,6 +48,11 @@ export default function MetadataCard({ data }: { data: MetadataResponse }) {
           {data.uploader && (
             <span className="flex items-center gap-1">
               <User className="h-3.5 w-3.5" /> {data.uploader}
+            </span>
+          )}
+          {data.view_count !== null && data.view_count !== undefined && (
+            <span className="flex items-center gap-1">
+              <Eye className="h-3.5 w-3.5" /> {formatViewCount(data.view_count)}
             </span>
           )}
         </div>

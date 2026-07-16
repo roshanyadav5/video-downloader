@@ -4,18 +4,25 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export class ApiClientError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  code: string;
+  constructor(message: string, status: number, code: string = "UNKNOWN") {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
-async function parseErrorDetail(res: Response): Promise<string> {
+async function throwFromResponse(res: Response): Promise<never> {
   try {
     const body = await res.json();
-    return body.detail || `Request failed with status ${res.status}`;
-  } catch {
-    return `Request failed with status ${res.status}`;
+    throw new ApiClientError(
+      body.error || `Request failed with status ${res.status}`,
+      res.status,
+      body.error_code || "UNKNOWN"
+    );
+  } catch (err) {
+    if (err instanceof ApiClientError) throw err;
+    throw new ApiClientError(`Request failed with status ${res.status}`, res.status);
   }
 }
 
@@ -26,9 +33,7 @@ export async function fetchMetadata(url: string): Promise<MetadataResponse> {
     body: JSON.stringify({ url }),
   });
 
-  if (!res.ok) {
-    throw new ApiClientError(await parseErrorDetail(res), res.status);
-  }
+  if (!res.ok) await throwFromResponse(res);
   return res.json();
 }
 
@@ -39,9 +44,7 @@ export async function startDownload(url: string, formatId: string): Promise<{ jo
     body: JSON.stringify({ url, format_id: formatId }),
   });
 
-  if (!res.ok) {
-    throw new ApiClientError(await parseErrorDetail(res), res.status);
-  }
+  if (!res.ok) await throwFromResponse(res);
   return res.json();
 }
 

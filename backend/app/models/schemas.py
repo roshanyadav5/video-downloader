@@ -29,6 +29,8 @@ class MetadataResponse(BaseModel):
     duration_seconds: float | None
     platform: str
     uploader: str | None = None
+    view_count: int | None = None
+    upload_date: str | None = None  # YYYY-MM-DD, when the platform reports it
     formats: list[VideoFormat]
 
 
@@ -50,4 +52,5 @@ class ProgressEvent(BaseModel):
     speed_bytes_per_sec: float | None = None
     eta_seconds: float | None = None
     error_message: str | None = None
+    error_code: str | None = None
     filename: str | None = None  # set once completed

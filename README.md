@@ -49,6 +49,23 @@ container host; the frontend doesn't.
 6. A background sweeper deletes job directories after 30 minutes
    (configurable), whether or not the client picked up the file.
 
+### Error responses
+
+Every error from the API — validation failures, extraction failures,
+rate limits, unexpected exceptions — has the same shape:
+```json
+{ "success": false, "error": "Human-readable message", "error_code": "PRIVATE_VIDEO" }
+```
+`error_code` is the machine-readable field to branch on in a client;
+`error` is safe to show directly to a user. Raw exception text and
+tracebacks never reach the client — unexpected errors are logged
+server-side in full and returned to the client as a generic message
+(see the catch-all handler in `main.py`). Full list of codes in
+`app/errors.py`. The same codes are used both in HTTP error responses
+and in the `error_code` field of SSE progress events, so a failed
+download mid-transfer is just as classifiable as a failed initial
+request.
+
 ### Security model
 
 - **Domain allowlist** — only known video-platform URLs are accepted;
@@ -58,6 +75,13 @@ container host; the frontend doesn't.
 - **Restricted extractors** — yt-dlp's `allowed_extractors` option is
   set explicitly, so its generic/fallback extractor (which will attempt
   to scrape *any* URL) never runs
+- **Validated redirect resolution** — short-link formats (Facebook
+  share links, `fb.watch`, `pin.it`, etc.) are resolved one hop at a
+  time, with every intermediate URL re-checked against the same domain
+  allowlist and safe-destination rules as the original request — this
+  gets the practical benefit of the generic extractor (following
+  redirects) without its SSRF exposure (fetching whatever a page points
+  it to, unchecked)
 - **Rate limiting** — sliding-window limiter per IP on all `/api/*` routes
 - **Concurrency caps** — per-IP and global limits on simultaneous
   downloads, plus a max video duration, to bound resource usage
@@ -194,6 +218,30 @@ match exactly, including `https://`).
 responses by default. If you put anything in front of the FastAPI
 backend (nginx, Cloudflare in "proxied" mode, etc.), disable buffering
 for the `/api/progress/*` route.
+
+**"Read-only file system" error when cookies are configured** —
+yt-dlp's `YoutubeDL.close()` unconditionally writes the cookie jar back
+to whatever path was passed as `cookiefile`, even when you only wanted
+to read from it. Render (and most secret-file mechanisms) mount
+secrets read-only, so pointing `COOKIES_FILE` directly at
+`/etc/secrets/cookies.txt` will crash on the first completed request.
+Already fixed — the app copies the secret file to a writable `/tmp`
+path once per process start and always hands yt-dlp that copy (see
+`_get_writable_cookiefile()` in `ytdlp_service.py`). No setup change
+needed on your end; `COOKIES_FILE` still points at the read-only
+secret path, the app handles the rest.
+
+**Facebook `/share/` links or `fb.watch` links failing with "No
+suitable extractor found"** — these are short-link formats that don't
+point directly at a video; they need to be resolved via HTTP redirect
+first, which yt-dlp normally delegates to its *generic* extractor (which
+this app deliberately never enables — see the SSRF note above). Fixed
+by resolving these specific short-link formats ourselves, one redirect
+hop at a time, re-validating each hop against the same domain
+allowlist and safe-destination checks before following it (see
+`resolve_redirect_chain()` in `security.py` and `url_normalizer.py`).
+If a new short-link format shows up that isn't covered, add its host
+to `_SHORTLINK_HOSTS` in `url_normalizer.py`.
 
 **Facebook videos/reels failing with a generic "unavailable or
 unsupported" error** — Facebook's servers reject requests whose TLS

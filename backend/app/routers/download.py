@@ -2,14 +2,16 @@ import asyncio
 import logging
 import os
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import APIRouter, Request
+from fastapi.responses import FileResponse
 from sse_starlette.sse import EventSourceResponse
 
 from app.config import get_settings
+from app.errors import AppError, ErrorCode, classify_ytdlp_error
 from app.models.schemas import DownloadJobResponse, DownloadRequest, ProgressEvent
 from app.services import security, ytdlp_service
 from app.services.job_manager import Job, job_manager
+from app.services.url_normalizer import normalize_url
 
 logger = logging.getLogger("fetchly.download")
 router = APIRouter(prefix="/api", tags=["download"])
@@ -23,21 +25,21 @@ async def start_download(payload: DownloadRequest, request: Request) -> Download
 
     try:
         security.validate_and_check_url(url)
+        resolved_url = normalize_url(url)
     except (security.UnsupportedURLError, security.UnsafeURLError) as exc:
-        raise HTTPException(status_code=400, detail="This URL could not be processed.") from exc
+        raise AppError(400, ErrorCode.UNSAFE_URL, "This URL could not be processed.") from exc
 
     if job_manager.active_count_for_ip(ip) >= settings.max_concurrent_jobs_per_ip:
-        raise HTTPException(
-            status_code=429,
-            detail=f"You can only run {settings.max_concurrent_jobs_per_ip} downloads at once.",
+        raise AppError(
+            429,
+            ErrorCode.RATE_LIMITED,
+            f"You can only run {settings.max_concurrent_jobs_per_ip} downloads at once.",
         )
     if job_manager.active_count_global() >= settings.max_concurrent_jobs_global:
-        raise HTTPException(
-            status_code=503, detail="Server is at capacity. Please try again shortly."
-        )
+        raise AppError(503, ErrorCode.CAPACITY, "Server is at capacity. Please try again shortly.")
 
     job = job_manager.create_job(ip)
-    asyncio.create_task(_execute_job(job, url, payload.format_id))
+    asyncio.create_task(_execute_job(job, resolved_url, payload.format_id))
     return DownloadJobResponse(job_id=job.id)
 
 
@@ -45,7 +47,7 @@ async def start_download(payload: DownloadRequest, request: Request) -> Download
 async def progress_stream(job_id: str):
     job = job_manager.get(job_id)
     if job is None:
-        raise HTTPException(status_code=404, detail="Job not found.")
+        raise AppError(404, ErrorCode.JOB_NOT_FOUND, "Job not found.")
 
     async def event_generator():
         # Replay the current state immediately in case the client
@@ -64,14 +66,14 @@ async def progress_stream(job_id: str):
 
 
 @router.get("/file/{job_id}")
-async def get_file(job_id: str, background_tasks: BackgroundTasks):
+async def get_file(job_id: str):
     job = job_manager.get(job_id)
     if job is None:
-        raise HTTPException(status_code=404, detail="Job not found.")
+        raise AppError(404, ErrorCode.JOB_NOT_FOUND, "Job not found.")
     if job.event.status != "completed" or not job.file_path:
-        raise HTTPException(status_code=409, detail="This download isn't ready yet.")
+        raise AppError(409, ErrorCode.JOB_NOT_READY, "This download isn't ready yet.")
     if not os.path.isfile(job.file_path):
-        raise HTTPException(status_code=410, detail="This file has expired. Please download again.")
+        raise AppError(410, ErrorCode.FILE_EXPIRED, "This file has expired. Please download again.")
 
     filename = job.event.filename or os.path.basename(job.file_path)
     return FileResponse(
@@ -122,23 +124,12 @@ async def _execute_job(job: Job, url: str, format_id: str) -> None:
         )
     except Exception as exc:
         logger.warning("Download job %s failed: %s", job.id, exc)
+        app_error = classify_ytdlp_error(exc, cookies_configured=bool(settings.cookies_file))
         await job_manager.push_update(
-            job, ProgressEvent(status="error", error_message=_friendly_download_error(exc))
+            job,
+            ProgressEvent(
+                status="error",
+                error_message=app_error.message,
+                error_code=app_error.error_code.value,
+            ),
         )
-
-
-def _friendly_download_error(exc: Exception) -> str:
-    text = str(exc).lower()
-    if "duration" in text and "does not pass filter" in text:
-        return "This video is too long for this service."
-    if "private" in text:
-        return "This video is private."
-    if "unavailable" in text or "removed" in text:
-        return "This video is unavailable or has been removed."
-    if "sign in" in text or "login" in text or "log in" in text:
-        return "This video requires sign-in and can't be fetched."
-    if "cannot parse data" in text or "impersonat" in text:
-        return "This platform is temporarily blocking automated access. Please try again shortly."
-    if "network" in text or "timed out" in text:
-        return "A network error occurred. Please try again."
-    return "The download failed. Please try a different format or try again."

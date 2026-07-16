@@ -18,7 +18,7 @@ Two layers of defense here:
 """
 import ipaddress
 import socket
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 # Known platforms this service explicitly supports. Anything else is
 # rejected before it ever reaches yt-dlp's generic/fallback extractor.
@@ -106,6 +106,53 @@ def validate_and_check_url(url: str) -> None:
     """Full validation pipeline. Raises UnsupportedURLError or UnsafeURLError."""
     hostname = validate_platform(url)
     assert_safe_destination(hostname)
+
+
+MAX_REDIRECT_HOPS = 5
+
+
+def resolve_redirect_chain(url: str) -> str:
+    """
+    Manually follows HTTP redirects one hop at a time, re-validating
+    each intermediate URL against the platform allowlist and
+    safe-destination checks before following it.
+
+    Why this exists: short-link formats like Facebook's
+    facebook.com/share/r/<id>/ aren't matched by yt-dlp's named
+    extractors at all — normally yt-dlp's *generic* extractor would
+    resolve them, but we deliberately never enable the generic
+    extractor (see module docstring — it will scrape whatever URL a
+    page redirects or points it to, which is a real SSRF vector). This
+    gives us the same practical result — following a short link to its
+    real destination — without ever handing yt-dlp a URL we haven't
+    validated ourselves first.
+
+    Raises UnsupportedURLError/UnsafeURLError if any hop in the chain
+    leaves the allowlisted domains or resolves to an unsafe address.
+    """
+    import requests
+
+    current = url
+    for _ in range(MAX_REDIRECT_HOPS):
+        validate_and_check_url(current)
+        try:
+            resp = requests.get(
+                current,
+                allow_redirects=False,
+                timeout=10,
+                stream=True,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; Fetchly/1.0)"},
+            )
+            resp.close()
+        except requests.RequestException as exc:
+            raise UnsafeURLError(f"Could not resolve redirect for '{current}'.") from exc
+
+        if resp.status_code in (301, 302, 303, 307, 308) and resp.headers.get("Location"):
+            current = urljoin(current, resp.headers["Location"])
+            continue
+        return current
+
+    return current  # exhausted hop budget — hand back the best-effort last URL
 
 
 def sanitize_filename(name: str, max_length: int = 150) -> str:

@@ -34,7 +34,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             if len(recent) > settings.rate_limit_requests_per_minute:
                 return JSONResponse(
                     status_code=429,
-                    content={"detail": "Too many requests. Please slow down."},
+                    content={
+                        "success": False,
+                        "error": "Too many requests. Please slow down.",
+                        "error_code": "RATE_LIMITED",
+                    },
                 )
 
         return await call_next(request)

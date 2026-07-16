@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
+import tempfile
 from typing import Any, Callable
 
 import yt_dlp
@@ -24,6 +26,38 @@ logger = logging.getLogger("fetchly.ytdlp")
 _RESOLUTION_ORDER = [2160, 1440, 1080, 720, 480, 360, 240, 144]
 
 
+_writable_cookiefile_cache: str | None = None
+
+
+def _get_writable_cookiefile() -> str | None:
+    """
+    yt-dlp's YoutubeDL.close() unconditionally calls cookiejar.save()
+    back to whatever path was passed as 'cookiefile' — there's no way
+    to load cookies read-only. Render (and most secret-file mechanisms)
+    mount secrets read-only, so pointing yt-dlp directly at
+    /etc/secrets/cookies.txt crashes with "Read-only file system" the
+    moment a request finishes.
+
+    Fix: copy the secret file to a writable /tmp path once per process
+    and always hand yt-dlp that copy. yt-dlp is free to update it as
+    much as it wants; we just re-copy from the real secret on restart.
+    """
+    global _writable_cookiefile_cache
+    settings = get_settings()
+
+    if not settings.cookies_file or not os.path.isfile(settings.cookies_file):
+        return None
+
+    if _writable_cookiefile_cache and os.path.isfile(_writable_cookiefile_cache):
+        return _writable_cookiefile_cache
+
+    writable_path = os.path.join(tempfile.gettempdir(), "fetchly-cookies.txt")
+    shutil.copyfile(settings.cookies_file, writable_path)
+    _writable_cookiefile_cache = writable_path
+    logger.info("Copied cookies file to writable path: %s", writable_path)
+    return writable_path
+
+
 def _base_ydl_opts() -> dict[str, Any]:
     settings = get_settings()
     opts: dict[str, Any] = {
@@ -34,6 +68,15 @@ def _base_ydl_opts() -> dict[str, Any]:
         # the critical SSRF safeguard. Never remove.
         "allowed_extractors": settings.allowed_extractors_list,
         "socket_timeout": 15,
+        "retries": 3,
+        "fragment_retries": 3,
+        "extractor_retries": 2,
+        "http_headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
+            ),
+        },
         # Cloud/datacenter IPs get flagged by YouTube's bot detection far
         # more aggressively than residential IPs ("Sign in to confirm
         # you're not a bot"). The web client is hit hardest; the
@@ -52,12 +95,10 @@ def _base_ydl_opts() -> dict[str, Any]:
         # just at the HTTP header level.
         "impersonate": ImpersonateTarget.from_str("chrome"),
     }
-    # Optional escape hatch: if a cookies file is provided (exported from
-    # a real logged-in browser session), use it. Not required for most
-    # public videos with the player_client fallback above, but some
-    # heavily-flagged videos need it. See README for how to set this up.
-    if settings.cookies_file and os.path.isfile(settings.cookies_file):
-        opts["cookiefile"] = settings.cookies_file
+
+    cookiefile = _get_writable_cookiefile()
+    if cookiefile:
+        opts["cookiefile"] = cookiefile
     return opts
 
 
@@ -179,8 +220,17 @@ def fetch_metadata(url: str) -> MetadataResponse:
         duration_seconds=info.get("duration"),
         platform=info.get("extractor_key") or info.get("extractor") or "Unknown",
         uploader=info.get("uploader"),
+        view_count=info.get("view_count"),
+        upload_date=_format_upload_date(info.get("upload_date")),
         formats=formats,
     )
+
+
+def _format_upload_date(raw: str | None) -> str | None:
+    """yt-dlp reports upload_date as YYYYMMDD; reformat to YYYY-MM-DD."""
+    if not raw or len(raw) != 8:
+        return raw
+    return f"{raw[0:4]}-{raw[4:6]}-{raw[6:8]}"
 
 
 def run_download(
