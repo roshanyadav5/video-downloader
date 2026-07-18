@@ -155,6 +155,35 @@ def resolve_redirect_chain(url: str) -> str:
     return current  # exhausted hop budget — hand back the best-effort last URL
 
 
+_PLATFORM_BY_DOMAIN = {
+    "youtube.com": "youtube", "youtu.be": "youtube", "m.youtube.com": "youtube",
+    "twitter.com": "twitter", "x.com": "twitter",
+    "instagram.com": "instagram",
+    "facebook.com": "facebook", "fb.watch": "facebook",
+    "tiktok.com": "tiktok", "vm.tiktok.com": "tiktok",
+    "reddit.com": "reddit", "v.redd.it": "reddit",
+    "vimeo.com": "vimeo",
+    "dailymotion.com": "dailymotion", "dai.ly": "dailymotion",
+    "twitch.tv": "twitch", "clips.twitch.tv": "twitch",
+    "pinterest.com": "pinterest", "pin.it": "pinterest",
+    "linkedin.com": "linkedin",
+    "snapchat.com": "snapchat",
+    "streamable.com": "streamable",
+}
+
+
+def detect_platform(url: str) -> str:
+    """Best-effort platform name for error responses. Never raises —
+    worst case returns 'unknown', since this is purely informational."""
+    try:
+        hostname = (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return "unknown"
+    if hostname in _PLATFORM_BY_DOMAIN:
+        return _PLATFORM_BY_DOMAIN[hostname]
+    return _PLATFORM_BY_DOMAIN.get(_root_domain(hostname), "unknown")
+
+
 def sanitize_filename(name: str, max_length: int = 150) -> str:
     """
     Strips path separators, control characters, and anything else that

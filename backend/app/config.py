@@ -34,9 +34,23 @@ class Settings(BaseSettings):
     # or localhost admin panel). Restricting to named, known extractors
     # means yt-dlp only ever talks to the specific platforms it has
     # purpose-built parsers for.
+    # IMPORTANT: these must match yt-dlp's actual registered IE_NAME
+    # values exactly, not just "the platform name". Several platforms
+    # split single-video extraction across multiple differently-named
+    # extractor classes (verified against yt_dlp.extractor.gen_extractor_classes()
+    # — don't guess names here, check the registry if adding a platform):
+    #   - Facebook Reels are a SEPARATE extractor ("facebook:reel") from
+    #     regular Facebook videos ("facebook") — this was silently
+    #     broken (every /reel/ link failed) until this was added.
+    #   - Twitch has NO bare "twitch" extractor at all — VODs and clips
+    #     are "twitch:vod" / "twitch:clips" respectively. The old bare
+    #     "twitch" entry matched nothing, ever.
+    #   - Snapchat's only single-video extractor is "SnapchatSpotlight"
+    #     — the old bare "snapchat" entry matched nothing, ever.
     allowed_extractors: str = (
-        "youtube,twitter,instagram,facebook,tiktok,reddit,vimeo,"
-        "dailymotion,twitch,pinterest,linkedin,snapchat,streamable"
+        "youtube,twitter,instagram,instagram:story,facebook,facebook:reel,"
+        "tiktok,reddit,vimeo,dailymotion,twitch:vod,twitch:clips,"
+        "pinterest,linkedin,SnapchatSpotlight,streamable"
     )
 
     # Optional: path to a Netscape-format cookies.txt file, exported

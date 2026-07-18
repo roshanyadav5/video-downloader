@@ -70,3 +70,26 @@ class TestSanitizeFilename:
     def test_enforces_max_length(self):
         result = security.sanitize_filename("a" * 500, max_length=150)
         assert len(result) <= 150
+
+
+class TestDetectPlatform:
+    def test_detects_youtube(self):
+        assert security.detect_platform("https://www.youtube.com/watch?v=abc") == "youtube"
+
+    def test_detects_youtube_short_domain(self):
+        assert security.detect_platform("https://youtu.be/abc") == "youtube"
+
+    def test_detects_facebook(self):
+        assert security.detect_platform("https://www.facebook.com/reel/123") == "facebook"
+
+    def test_detects_facebook_via_fb_watch(self):
+        assert security.detect_platform("https://fb.watch/abc/") == "facebook"
+
+    def test_detects_tiktok(self):
+        assert security.detect_platform("https://www.tiktok.com/@user/video/123") == "tiktok"
+
+    def test_unknown_domain_returns_unknown(self):
+        assert security.detect_platform("https://example.com/video") == "unknown"
+
+    def test_malformed_url_returns_unknown(self):
+        assert security.detect_platform("not a url") == "unknown"

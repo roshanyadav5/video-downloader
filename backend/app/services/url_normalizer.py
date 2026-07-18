@@ -23,6 +23,8 @@ _TRACKING_PARAMS = {
     "si", "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
     "igshid", "igsh", "fbclid", "gclid", "mc_cid", "mc_eid", "feature",
     "spm", "_ga", "ref", "ref_src", "ref_url", "s", "app",
+    # Facebook-specific noise seen on shared reel/watch links
+    "rdid", "share_url", "mibextid", "fs", "sfnsn", "extid", "paipv", "eav",
 }
 
 # Hosts that are *always* short-links needing redirect resolution

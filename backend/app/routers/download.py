@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 from sse_starlette.sse import EventSourceResponse
 
 from app.config import get_settings
-from app.errors import AppError, ErrorCode, classify_ytdlp_error
+from app.errors import AppError, Reason, classify_ytdlp_error
 from app.models.schemas import DownloadJobResponse, DownloadRequest, ProgressEvent
 from app.services import security, ytdlp_service
 from app.services.job_manager import Job, job_manager
@@ -22,24 +22,26 @@ async def start_download(payload: DownloadRequest, request: Request) -> Download
     settings = get_settings()
     url = payload.url.strip()
     ip = request.client.host if request.client else "unknown"
+    platform = security.detect_platform(url)
 
     try:
         security.validate_and_check_url(url)
         resolved_url = normalize_url(url)
     except (security.UnsupportedURLError, security.UnsafeURLError) as exc:
-        raise AppError(400, ErrorCode.UNSAFE_URL, "This URL could not be processed.") from exc
+        raise AppError(400, Reason.UNSAFE_URL, "This URL could not be processed.", platform=platform) from exc
 
     if job_manager.active_count_for_ip(ip) >= settings.max_concurrent_jobs_per_ip:
         raise AppError(
             429,
-            ErrorCode.RATE_LIMITED,
+            Reason.RATE_LIMITED,
             f"You can only run {settings.max_concurrent_jobs_per_ip} downloads at once.",
+            platform=platform,
         )
     if job_manager.active_count_global() >= settings.max_concurrent_jobs_global:
-        raise AppError(503, ErrorCode.CAPACITY, "Server is at capacity. Please try again shortly.")
+        raise AppError(503, Reason.CAPACITY, "Server is at capacity. Please try again shortly.", platform=platform)
 
     job = job_manager.create_job(ip)
-    asyncio.create_task(_execute_job(job, resolved_url, payload.format_id))
+    asyncio.create_task(_execute_job(job, resolved_url, payload.format_id, platform))
     return DownloadJobResponse(job_id=job.id)
 
 
@@ -47,7 +49,7 @@ async def start_download(payload: DownloadRequest, request: Request) -> Download
 async def progress_stream(job_id: str):
     job = job_manager.get(job_id)
     if job is None:
-        raise AppError(404, ErrorCode.JOB_NOT_FOUND, "Job not found.")
+        raise AppError(404, Reason.JOB_NOT_FOUND, "Job not found.")
 
     async def event_generator():
         # Replay the current state immediately in case the client
@@ -69,11 +71,11 @@ async def progress_stream(job_id: str):
 async def get_file(job_id: str):
     job = job_manager.get(job_id)
     if job is None:
-        raise AppError(404, ErrorCode.JOB_NOT_FOUND, "Job not found.")
+        raise AppError(404, Reason.JOB_NOT_FOUND, "Job not found.")
     if job.event.status != "completed" or not job.file_path:
-        raise AppError(409, ErrorCode.JOB_NOT_READY, "This download isn't ready yet.")
+        raise AppError(409, Reason.JOB_NOT_READY, "This download isn't ready yet.")
     if not os.path.isfile(job.file_path):
-        raise AppError(410, ErrorCode.FILE_EXPIRED, "This file has expired. Please download again.")
+        raise AppError(410, Reason.FILE_EXPIRED, "This file has expired. Please download again.")
 
     filename = job.event.filename or os.path.basename(job.file_path)
     return FileResponse(
@@ -83,7 +85,7 @@ async def get_file(job_id: str):
     )
 
 
-async def _execute_job(job: Job, url: str, format_id: str) -> None:
+async def _execute_job(job: Job, url: str, format_id: str, platform: str) -> None:
     settings = get_settings()
     loop = asyncio.get_running_loop()
 
@@ -124,12 +126,14 @@ async def _execute_job(job: Job, url: str, format_id: str) -> None:
         )
     except Exception as exc:
         logger.warning("Download job %s failed: %s", job.id, exc)
-        app_error = classify_ytdlp_error(exc, cookies_configured=bool(settings.cookies_file))
+        app_error = classify_ytdlp_error(
+            exc, platform=platform, cookies_configured=bool(settings.cookies_file)
+        )
         await job_manager.push_update(
             job,
             ProgressEvent(
                 status="error",
                 error_message=app_error.message,
-                error_code=app_error.error_code.value,
+                error_code=app_error.reason.value,
             ),
         )

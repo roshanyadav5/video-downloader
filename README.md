@@ -54,17 +54,18 @@ container host; the frontend doesn't.
 Every error from the API — validation failures, extraction failures,
 rate limits, unexpected exceptions — has the same shape:
 ```json
-{ "success": false, "error": "Human-readable message", "error_code": "PRIVATE_VIDEO" }
+{ "success": false, "platform": "youtube", "reason": "bot_detection", "message": "This platform is asking for sign-in verification right now." }
 ```
-`error_code` is the machine-readable field to branch on in a client;
-`error` is safe to show directly to a user. Raw exception text and
-tracebacks never reach the client — unexpected errors are logged
-server-side in full and returned to the client as a generic message
-(see the catch-all handler in `main.py`). Full list of codes in
-`app/errors.py`. The same codes are used both in HTTP error responses
-and in the `error_code` field of SSE progress events, so a failed
-download mid-transfer is just as classifiable as a failed initial
-request.
+`reason` is the machine-readable field to branch on in a client;
+`message` is safe to show directly to a user; `platform` is detected
+from the URL's domain (`"unknown"` when it can't be determined, e.g.
+for a malformed URL). Raw exception text and tracebacks never reach
+the client — unexpected errors are logged server-side in full and
+returned to the client as a generic message (see the catch-all handler
+in `main.py`). Full list of reasons in `app/errors.py`. The download
+job's SSE progress stream carries the same `reason` value in its
+`error_code` field, so a failure mid-transfer is just as classifiable
+as a failed initial request.
 
 ### Security model
 
@@ -134,9 +135,26 @@ Open `http://localhost:3000`.
 - Both services hot-reload on save in dev mode
 
 Adding a new platform: add its domain(s) to `ALLOWED_DOMAINS` in
-`backend/app/services/security.py` and its yt-dlp extractor name to
-`allowed_extractors` in `backend/app/config.py`. Check yt-dlp's
-extractor name with `yt-dlp --list-extractors | grep -i <platform>`.
+`backend/app/services/security.py` and its yt-dlp extractor name(s) to
+`allowed_extractors` in `backend/app/config.py`. **Don't guess the
+extractor name** — check it first:
+```python
+import yt_dlp
+for e in yt_dlp.extractor.gen_extractor_classes():
+    if 'yourplatform' in e.IE_NAME.lower():
+        print(e.IE_NAME, '->', e._VALID_URL)
+```
+This matters more than it looks: yt-dlp splits some platforms across
+multiple, distinctly-named extractors, and a plausible-looking guess
+can silently break the platform entirely. This actually happened
+during development — the allowlist had `facebook`, `snapchat`, and
+`twitch` (all reasonable-looking names), but Facebook Reels are a
+*separate* extractor (`facebook:reel`), and there is no bare `twitch`
+or `snapchat` extractor at all — the real names are
+`twitch:vod`/`twitch:clips` and `SnapchatSpotlight`. All three
+platforms failed with "No suitable extractor found" for every URL
+until this was caught. If you add a platform, verify it actually
+matches with the script above, not by assumption.
 
 ---
 

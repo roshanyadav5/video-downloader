@@ -26,7 +26,11 @@ logger = logging.getLogger("fetchly.ytdlp")
 _RESOLUTION_ORDER = [2160, 1440, 1080, 720, 480, 360, 240, 144]
 
 
+import threading
+
 _writable_cookiefile_cache: str | None = None
+_cached_source_mtime: float | None = None
+_cookiefile_lock = threading.Lock()
 
 
 def _get_writable_cookiefile() -> str | None:
@@ -38,28 +42,68 @@ def _get_writable_cookiefile() -> str | None:
     /etc/secrets/cookies.txt crashes with "Read-only file system" the
     moment a request finishes.
 
-    Fix: copy the secret file to a writable /tmp path once per process
-    and always hand yt-dlp that copy. yt-dlp is free to update it as
-    much as it wants; we just re-copy from the real secret on restart.
+    Fix: copy the secret file to a writable /tmp path and always hand
+    yt-dlp that copy. yt-dlp is free to update it as much as it wants.
+
+    Stays fresh across secret updates: compares the source file's
+    mtime on every call and re-copies if it changed, so a cookie
+    refresh takes effect on the next request rather than requiring a
+    full process restart (Render does restart on secret-file changes,
+    but this makes it correct even where that isn't guaranteed).
+
+    Thread-safe: metadata/download requests each run in their own
+    thread-pool thread, so this can genuinely be called concurrently.
     """
-    global _writable_cookiefile_cache
+    global _writable_cookiefile_cache, _cached_source_mtime
     settings = get_settings()
 
     if not settings.cookies_file or not os.path.isfile(settings.cookies_file):
         return None
 
-    if _writable_cookiefile_cache and os.path.isfile(_writable_cookiefile_cache):
+    source_mtime = os.path.getmtime(settings.cookies_file)
+    is_fresh = (
+        _writable_cookiefile_cache
+        and os.path.isfile(_writable_cookiefile_cache)
+        and _cached_source_mtime == source_mtime
+    )
+    if is_fresh:
         return _writable_cookiefile_cache
 
-    writable_path = os.path.join(tempfile.gettempdir(), "fetchly-cookies.txt")
-    shutil.copyfile(settings.cookies_file, writable_path)
-    _writable_cookiefile_cache = writable_path
-    logger.info("Copied cookies file to writable path: %s", writable_path)
-    return writable_path
+    with _cookiefile_lock:
+        # Re-check after acquiring the lock — another thread may have
+        # already refreshed it while we were waiting.
+        source_mtime = os.path.getmtime(settings.cookies_file)
+        if (
+            _writable_cookiefile_cache
+            and os.path.isfile(_writable_cookiefile_cache)
+            and _cached_source_mtime == source_mtime
+        ):
+            return _writable_cookiefile_cache
+
+        writable_path = os.path.join(tempfile.gettempdir(), "fetchly-cookies.txt")
+        shutil.copyfile(settings.cookies_file, writable_path)
+        _writable_cookiefile_cache = writable_path
+        _cached_source_mtime = source_mtime
+        logger.info("Copied cookies file to writable path: %s", writable_path)
+        return writable_path
 
 
 def _base_ydl_opts() -> dict[str, Any]:
     settings = get_settings()
+    cookiefile = _get_writable_cookiefile()
+
+    # This matters more than it looks: verified directly against
+    # yt-dlp's own INNERTUBE_CLIENTS table (extractor/youtube/_base.py)
+    # that the android/ios/mweb clients have SUPPORTS_COOKIES=False —
+    # they cannot use cookie-based auth *at all*, no matter how valid
+    # the cookies are. Only 'web' and 'tv' support cookies. Of those,
+    # 'tv' additionally has no PO Token requirement (web does, even
+    # when authenticated), making it the more reliable authenticated
+    # client. So: with cookies, lead with tv/web; without cookies,
+    # android/ios genuinely do work for many non-flagged videos and
+    # stay as the fallback chain.
+    player_clients = ["tv", "web"] if cookiefile else ["android", "ios", "web"]
+
     opts: dict[str, Any] = {
         "quiet": True,
         "no_warnings": True,
@@ -77,15 +121,8 @@ def _base_ydl_opts() -> dict[str, Any]:
                 "(KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
             ),
         },
-        # Cloud/datacenter IPs get flagged by YouTube's bot detection far
-        # more aggressively than residential IPs ("Sign in to confirm
-        # you're not a bot"). The web client is hit hardest; the
-        # android/ios clients use a different auth flow that's
-        # frequently still open to unauthenticated requests. Trying
-        # them in order gives yt-dlp a real fallback path instead of
-        # failing outright on the first block.
         "extractor_args": {
-            "youtube": {"player_client": ["android", "ios", "web"]},
+            "youtube": {"player_client": player_clients},
         },
         # Facebook (and increasingly other platforms) reject requests
         # whose TLS handshake doesn't match a real browser's fingerprint
@@ -96,7 +133,6 @@ def _base_ydl_opts() -> dict[str, Any]:
         "impersonate": ImpersonateTarget.from_str("chrome"),
     }
 
-    cookiefile = _get_writable_cookiefile()
     if cookiefile:
         opts["cookiefile"] = cookiefile
     return opts

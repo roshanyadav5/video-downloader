@@ -38,6 +38,7 @@ export interface ProgressEvent {
 
 export interface ApiError {
   success: false;
-  error: string;
-  error_code: string;
+  platform: string;
+  reason: string;
+  message: string;
 }

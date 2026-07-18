@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import get_settings
-from app.errors import AppError, ErrorCode
+from app.errors import AppError, Reason
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.routers import download, metadata
 from app.services.cleanup import cleanup_loop
@@ -58,7 +58,12 @@ def create_app() -> FastAPI:
     async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:
         return JSONResponse(
             status_code=exc.status_code,
-            content={"success": False, "error": exc.message, "error_code": exc.error_code.value},
+            content={
+                "success": False,
+                "platform": exc.platform,
+                "reason": exc.reason.value,
+                "message": exc.message,
+            },
         )
 
     @app.exception_handler(RequestValidationError)
@@ -67,8 +72,9 @@ def create_app() -> FastAPI:
             status_code=422,
             content={
                 "success": False,
-                "error": "The request was malformed.",
-                "error_code": ErrorCode.INVALID_URL.value,
+                "platform": "unknown",
+                "reason": Reason.INVALID_URL.value,
+                "message": "The request was malformed.",
             },
         )
 
@@ -79,7 +85,12 @@ def create_app() -> FastAPI:
         # normalized to the same response shape.
         return JSONResponse(
             status_code=exc.status_code,
-            content={"success": False, "error": str(exc.detail), "error_code": ErrorCode.UNKNOWN.value},
+            content={
+                "success": False,
+                "platform": "unknown",
+                "reason": Reason.UNKNOWN.value,
+                "message": str(exc.detail),
+            },
         )
 
     @app.exception_handler(Exception)
@@ -92,8 +103,9 @@ def create_app() -> FastAPI:
             status_code=500,
             content={
                 "success": False,
-                "error": "An unexpected error occurred. Please try again.",
-                "error_code": ErrorCode.UNKNOWN.value,
+                "platform": "unknown",
+                "reason": Reason.UNKNOWN.value,
+                "message": "An unexpected error occurred. Please try again.",
             },
         )
 

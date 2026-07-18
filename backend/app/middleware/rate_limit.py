@@ -36,8 +36,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     status_code=429,
                     content={
                         "success": False,
-                        "error": "Too many requests. Please slow down.",
-                        "error_code": "RATE_LIMITED",
+                        "platform": "unknown",
+                        "reason": "rate_limited",
+                        "message": "Too many requests. Please slow down.",
                     },
                 )
 

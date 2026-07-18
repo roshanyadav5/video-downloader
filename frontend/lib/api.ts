@@ -5,7 +5,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 export class ApiClientError extends Error {
   status: number;
   code: string;
-  constructor(message: string, status: number, code: string = "UNKNOWN") {
+  constructor(message: string, status: number, code: string = "unknown") {
     super(message);
     this.status = status;
     this.code = code;
@@ -16,9 +16,9 @@ async function throwFromResponse(res: Response): Promise<never> {
   try {
     const body = await res.json();
     throw new ApiClientError(
-      body.error || `Request failed with status ${res.status}`,
+      body.message || `Request failed with status ${res.status}`,
       res.status,
-      body.error_code || "UNKNOWN"
+      body.reason || "unknown"
     );
   } catch (err) {
     if (err instanceof ApiClientError) throw err;
