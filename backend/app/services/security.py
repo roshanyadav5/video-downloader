@@ -36,6 +36,7 @@ ALLOWED_DOMAINS = {
     "linkedin.com",
     "snapchat.com",
     "streamable.com",
+    "pornhub.com", "www.pornhub.com", "www.redtube.com", "www.xvideos.com",
 }
 
 
